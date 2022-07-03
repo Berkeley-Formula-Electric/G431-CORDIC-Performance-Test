@@ -34,21 +34,16 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define TWO_TO_POW_31 2147483648.0f
-#define Q31_TO_FLOAT(x) ( (float)(x)/(TWO_TO_POW_31))
-#define FLOAT_TO_Q31(x) ( (int)( (float)(x)*(float)0x7FFFFFFF ) )
+#define Q31_TO_FLOAT(x) ((float)(x) / (float)(0x80000000))
+#define FLOAT_TO_Q31(x) ((int32_t)((float)(x) * (float)0x7FFFFFFF))
 
-float WRAP_TO_PI(float angle_radians) {
-  if (angle_radians>=0)
-        return fmodf(angle_radians+M_PI, 2.0f*M_PI)-M_PI;
-    else
-      return fmodf(angle_radians-M_PI, 2.0f*M_PI)+M_PI;
+/**
+ * Wrap angle in radians to [−pi pi]
+ */
+static inline float wrapToPi(float value) {
+  return fmodf(value + M_PI, 2*M_PI) - M_PI;
 }
 
-int32_t FLOAT_RADIANS_TO_Q31(float angle_radians)  // Q31 have a scaled input with the range [-1 1] mapping to [-pi pi).
-{
-  return FLOAT_TO_Q31(WRAP_TO_PI(angle_radians)/M_PI);
-}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -110,6 +105,7 @@ int main(void)
   MX_CORDIC_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+
   CORDIC_ConfigTypeDef config = {
     CORDIC_FUNCTION_COSINE, // ouput : cosine, then sine
     CORDIC_SCALE_0, // not used
@@ -120,6 +116,7 @@ int main(void)
     CORDIC_PRECISION_6CYCLES // better than 10-3
   };
   HAL_CORDIC_Configure(&hcordic, &config);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -134,40 +131,45 @@ int main(void)
 
     float theta;
 
-    uint32_t start_t;
 
-    uint32_t n_iters = 10000;
+    uint32_t start_t;
+    uint32_t normal_t;
+    uint32_t cordic_t;
+
+    const uint32_t N_ITERS = 10000;
 
 
     start_t = HAL_GetTick();
-
-    for (uint32_t i=0; i<n_iters; i+=1) {
+    for (uint32_t i=0; i<N_ITERS; i+=1) {
       theta = (float)i;
+
       normal_sum += cosf(theta) * 0.5 + sinf(theta) * 0.25;
     }
-    uint32_t normal_t = HAL_GetTick() - start_t;
+    normal_t = HAL_GetTick() - start_t;
 
 
-    int32_t InBuff[1] = {0};
-    int32_t OutBuff[2] = {0,0};
+    int32_t cordic_arg[1];
+    int32_t cordic_res[2];
 
     start_t = HAL_GetTick();
-    for (uint32_t i=0; i<n_iters; i+=1) {
+    for (uint32_t i=0; i<N_ITERS; i+=1) {
       theta = (float)i;
 
-      InBuff[0] = FLOAT_RADIANS_TO_Q31(theta);
+      cordic_arg[0] = FLOAT_TO_Q31(wrapToPi(theta)/M_PI);
 
       float cosine_theta;
       float sine_theta;
-      HAL_StatusTypeDef result = HAL_CORDIC_Calculate(&hcordic,InBuff,OutBuff,1,10);
-      if(HAL_OK==result)
-      {
-          cosine_theta = Q31_TO_FLOAT(OutBuff[0]);
-          sine_theta = Q31_TO_FLOAT(OutBuff[1]);
+      HAL_StatusTypeDef result = HAL_CORDIC_Calculate(&hcordic, cordic_arg, cordic_res, 1, 10);
+
+      if(HAL_OK==result) {
+        cosine_theta = Q31_TO_FLOAT(cordic_res[0]);
+        sine_theta = Q31_TO_FLOAT(cordic_res[1]);
       }
+
       cordic_sum += cosine_theta * 0.5 + sine_theta * 0.25;
     }
-    uint32_t cordic_t = HAL_GetTick() - start_t;
+    cordic_t = HAL_GetTick() - start_t;
+
 
     char str[128];
     sprintf(str, "normal: %f %d, cordic: %f %d\r\n", normal_sum, normal_t, cordic_sum, cordic_t);
